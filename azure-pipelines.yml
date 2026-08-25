@@ -1,0 +1,52 @@
+trigger:
+- main
+
+pool:
+  name: dhurander
+
+stages:
+
+- stage: Terraform_Init_Plan
+  displayName: 'Terraform Init and Plan'
+
+  jobs:
+  - job: Terraform
+    displayName: 'Terraform'
+
+    steps:
+
+    - checkout: self
+      displayName: 'Checkout Code'
+
+    - task: TerraformInstaller@1
+      displayName: 'Install Terraform'
+      inputs:
+        terraformVersion: 'latest'
+
+    - task: AzureCLI@2
+      displayName: 'Terraform Init and Plan'
+      inputs:
+        azureSubscription: 'axion'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+        inlineScript: 'terraform init'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'axion'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+        inlineScript: 'terraform plan'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
+- stage: terraform
+  jobs:
+    - job: 
+      displayName: apply
+      steps:
+        - task: TerraformTask@5
+          inputs:
+            # provider: 'azurerm'
+            command: 'apply -auto-approve'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
+            environmentServiceNameAzureRM: 'axion'
+      
