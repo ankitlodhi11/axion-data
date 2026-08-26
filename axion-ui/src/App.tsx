@@ -15,7 +15,7 @@ import { SystemSettings } from './components/pages/SystemSettings';
 import { DashboardView } from './components/pages/DashboardView';
 import { NotFound } from './components/pages/NotFound';
 
-const API_BASE = 'http://4.224.138.26:8000'; // Replace with your actual API base URL
+const API_BASE = 'http://axion-telemetry-service.phohajaleabi.shop:8000'; // Replace with your actual API base URL
 
 function App() {
   const location = useLocation();

@@ -7,7 +7,7 @@ import { Throughput } from '../Throughput';
 import { DigitalTwin } from '../DigitalTwin';
 import { ThermalCamera } from '../ThermalCamera';
 
-const API_BASE = 'http://4.224.138.26:8000'; // Replace with your actual API base URL
+const API_BASE = 'http://axion-telemetry-service.phohajaleabi.shop:8000'; // Replace with your actual API base URL
 
 interface DashboardViewProps {
   devices: any[];
