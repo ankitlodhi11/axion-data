@@ -1,14 +1,17 @@
 trigger:
-- main
+  - main
 
 pool: dhurander
 
 stages:
+# ----------------------------------------------------
+# STAGE 1: INFRASTRUCTURE DEPLOYMENT (TERRAFORM)
+# ----------------------------------------------------
 - stage: Terraform
+  displayName: 'Deploy AKS Infrastructure'
   jobs:
   - job: Terraform
     steps:
-
     - task: TerraformInstaller@1
       displayName: 'Install Terraform'
       inputs:
@@ -40,3 +43,91 @@ stages:
         command: 'apply'
         workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
         environmentServiceNameAzureRM: 'axion'
+
+# ----------------------------------------------------
+# STAGE 2: BUILD, PUSH & DEPLOY APPLICATIONS TO AKS
+# ----------------------------------------------------
+- stage: DeployApplications
+  displayName: 'Build, Push & Deploy to AKS'
+  dependsOn: Terraform
+  condition: succeeded()
+  jobs:
+  - job: BuildAndDeploy
+    displayName: 'App CI/CD Workflow'
+    steps:
+
+    # 1. Login to Azure & ACR
+    - task: AzureCLI@2
+      displayName: 'Login to ACR'
+      inputs:
+        azureSubscription: 'axion'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az acr login --name axion912345
+
+    # 2. Build and Push - Axion Ingestion Service
+    - script: |
+        docker build -t axion912345.azurecr.io/ingestion:v1 -t axion912345.azurecr.io/ingestion:$(Build.BuildId) ./axion-ingestion-service
+        docker push axion912345.azurecr.io/ingestion:v1
+        docker push axion912345.azurecr.io/ingestion:$(Build.BuildId)
+      displayName: 'Build & Push Ingestion Service'
+
+    # 3. Build and Push - Axion Data Simulator
+    - script: |
+        docker build -t axion912345.azurecr.io/simulator:v1 -t axion912345.azurecr.io/simulator:$(Build.BuildId) ./axion-data-simulator
+        docker push axion912345.azurecr.io/simulator:v1
+        docker push axion912345.azurecr.io/simulator:$(Build.BuildId)
+      displayName: 'Build & Push Data Simulator'
+
+    # 4. Build and Push - Axion Telemetry Query Service
+    - script: |
+        docker build -t axion912345.azurecr.io/telemetry:v1 -t axion912345.azurecr.io/telemetry:$(Build.BuildId) ./axion-telemetry-query-service
+        docker push axion912345.azurecr.io/telemetry:v1
+        docker push axion912345.azurecr.io/telemetry:$(Build.BuildId)
+      displayName: 'Build & Push Telemetry Service'
+
+    # 5. Build and Push - Axion UI
+    - script: |
+        docker build -t axion912345.azurecr.io/axion-ui:v1 -t axion912345.azurecr.io/axion-ui:$(Build.BuildId) ./axion-ui
+        docker push axion912345.azurecr.io/axion-ui:v1
+        docker push axion912345.azurecr.io/axion-ui:$(Build.BuildId)
+      displayName: 'Build & Push Axion UI'
+
+    # 6. Connect to AKS & Deploy Kubernetes Manifests
+    - task: AzureCLI@2
+      displayName: 'Deploy Manifests to AKS'
+      inputs:
+        azureSubscription: 'axion'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # AKS Credentials fetch karna
+          az aks get-credentials --resource-group rg-aks-axion --name aks-axion-03 --overwrite-existing
+
+          cd database
+
+          # 1. Database & pgAdmin Deployment
+          kubectl apply -f deployment.yaml
+          kubectl apply -f service.yaml
+          kubectl apply -f pgadmin.yaml
+          kubectl apply -f servicepg.yaml
+
+          # 2. Ingestion Service Deployment
+          kubectl apply -f ingestion.yaml
+          kubectl apply -f servicein.yaml
+
+          # 3. Data Simulator Deployment
+          kubectl apply -f simulator.yaml
+
+          # 4. Telemetry Service Deployment
+          kubectl apply -f telemetry.yaml
+          kubectl apply -f servicete.yaml
+
+          # 5. Axion UI Deployment
+          kubectl apply -f axion-ui.yaml
+          kubectl apply -f serviceui.yaml
+
+          # Status check
+          kubectl get pods -o wide
+          kubectl get svc
