@@ -8,7 +8,7 @@ stages:
       - job: LoginAndDeploy
         displayName: 'Login to ACR & Deploy to AKS'
         pool:
-          vmImage: 'windows-latest'
+          name: dhurander
         steps:
           - task: AzureCLI@2
             displayName: 'Authenticate, Connect AKS & Deploy'
