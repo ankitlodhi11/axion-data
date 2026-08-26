@@ -1,0 +1,42 @@
+trigger:
+- main
+
+pool: dhurander
+
+stages:
+- stage: Terraform
+  jobs:
+  - job: Terraform
+    steps:
+
+    - task: TerraformInstaller@1
+      displayName: 'Install Terraform'
+      inputs:
+        terraformVersion: 'latest'
+
+    - task: TerraformTask@5
+      displayName: 'Terraform Init'
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
+        backendServiceArm: 'axion'
+        backendAzureRmStorageAccountName: 'akstest987654321'
+        backendAzureRmContainerName: 'tfstate'
+        backendAzureRmKey: 'terraform.tfstate'
+
+    - task: TerraformTask@5
+      displayName: 'Terraform Plan'
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
+        environmentServiceNameAzureRM: 'axion'
+
+    - task: TerraformTask@5
+      displayName: 'Terraform Apply'
+      inputs:
+        provider: 'azurerm'
+        command: 'apply'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
+        environmentServiceNameAzureRM: 'axion'
