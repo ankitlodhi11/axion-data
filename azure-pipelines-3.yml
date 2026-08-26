@@ -1,0 +1,33 @@
+trigger:
+  - main
+
+stages:
+  - stage: Deploy
+    displayName: 'Deploy to AKS Stage'
+    jobs:
+      - job: LoginAndDeploy
+        displayName: 'Login to ACR & Deploy to AKS'
+        pool:
+          vmImage: 'windows-latest'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Authenticate, Connect AKS & Deploy'
+            inputs:
+              azureSubscription: 'axion'   # <-- Service connection name yahan set ho gaya
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # 1. Subscription context set karein
+                az account set --subscription "1a14e6e7-7147-4e0a-83eb-82fd0b414b80"
+
+                # 2. ACR Login
+                az acr login --name axion912345
+
+                # 3. AKS Credentials fetch karein
+                az aks get-credentials --resource-group rg-aks-axion --name aks-axion-03 --overwrite-existing
+
+                # 4. Check Cluster Connection
+                kubectl get nodes
+
+                # 5. Apply Kubernetes Manifests
+                kubectl apply -f $(Build.SourcesDirectory)/k8s/
