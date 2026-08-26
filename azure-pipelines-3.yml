@@ -8,13 +8,13 @@ stages:
       - job: LoginAndDeploy
         displayName: 'Login to ACR & Deploy to AKS'
         pool:
-          name: dhurander
+          name: dhurander   # <-- Aapka agent pool set ho gaya
         steps:
           - task: AzureCLI@2
             displayName: 'Authenticate, Connect AKS & Deploy'
             inputs:
-              azureSubscription: 'axion'   # <-- Service connection name yahan set ho gaya
-              scriptType: 'pscore'
+              azureSubscription: 'axion'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
                 # 1. Subscription context set karein
