@@ -48,7 +48,7 @@ stages:
   - job: BuildMicroservices
     displayName: 'Build & Scan'
     strategy:
-      parallel: 4
+      maxParallel: 4
       matrix:
         Ingestion:
           serviceName: 'axion-ingestion-service'
