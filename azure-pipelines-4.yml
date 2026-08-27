@@ -14,86 +14,49 @@ variables:
 
 stages:
 # ------------------------------------------------------------------
-# Stage 1: Security Scans (Secret Detection & IaC)
+# Stage 1: Parallel Docker Build & ACR Push
 # ------------------------------------------------------------------
-- stage: SecurityScans
-  displayName: 'DevSecOps: Secrets & IaC'
-  jobs:
-  - job: CodeSecurity
-    displayName: 'Gitleaks & Checkov'
-    steps:
-    # 1. Secret Detection (Gitleaks)
-    - script: |
-        wget https://github.com/gitleaks/gitleaks/releases/download/v8.18.2/gitleaks_8.18.2_linux_x64.tar.gz
-        tar -zxvf gitleaks_8.18.2_linux_x64.tar.gz
-        sudo mv gitleaks /usr/local/bin/
-        gitleaks detect --source . --verbose
-      displayName: 'Run Gitleaks Secret Scan'
-      continueOnError: true
-
-    # 2. Checkov IaC Security
-    - script: |
-        pip install --upgrade checkov
-        checkov -d $(System.DefaultWorkingDirectory)/infradev --framework terraform --soft-fail
-        checkov -d $(System.DefaultWorkingDirectory)/database --framework kubernetes --soft-fail
-      displayName: 'Run Checkov IaC Scan'
-      continueOnError: true
-
-# ------------------------------------------------------------------
-# Stage 2: Parallel Docker Build, Trivy Scan & ACR Push
-# ------------------------------------------------------------------
-- stage: BuildScanAndPush
-  displayName: 'Parallel Docker Build & Trivy Scan'
-  dependsOn: SecurityScans
-  condition: in(dependencies.SecurityScans.result, 'Succeeded', 'SucceededWithIssues', 'Failed')
+- stage: BuildAndPush
+  displayName: 'Parallel Docker Build & Push'
   jobs:
   - job: BuildMicroservices
-    displayName: 'Build & Scan'
+    displayName: 'Build & Push Images'
     strategy:
       maxParallel: 4
       matrix:
         Ingestion:
           serviceName: 'axion-ingestion-service'
           folderPath: 'axion-ingestion-service'
-        Telemetry:
-          serviceName: 'axion-telemetry-query-service'
-          folderPath: 'axion-telemetry-query-service'
         Simulator:
           serviceName: 'axion-data-simulator'
           folderPath: 'axion-data-simulator'
+        Telemetry:
+          serviceName: 'axion-telemetry-query-service'
+          folderPath: 'axion-telemetry-query-service'
         UI:
           serviceName: 'axion-ui'
           folderPath: 'axion-ui'
     steps:
-    - script: |
-        sudo apt-get install wget apt-transport-https gnupg lsb-release -y
-        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-        echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
-        sudo apt-get update
-        sudo apt-get install trivy -y
-      displayName: 'Install Trivy Scanner'
-
     - task: AzureCLI@2
       displayName: 'Login to ACR'
       inputs:
         azureSubscription: '$(azureServiceConnection)'
-        scriptType: 'bash'
+        scriptType: 'ps'
         scriptLocation: 'inlineScript'
         inlineScript: |
           az acr login --name $(acrName)
 
-    - script: |
+    - powershell: |
         docker build -t $(acrLoginServer)/$(serviceName):$(imageTag) -f $(System.DefaultWorkingDirectory)/$(folderPath)/Dockerfile $(System.DefaultWorkingDirectory)/$(folderPath)
-        trivy image --severity HIGH,CRITICAL --exit-code 0 $(acrLoginServer)/$(serviceName):$(imageTag)
         docker push $(acrLoginServer)/$(serviceName):$(imageTag)
-      displayName: 'Build, Scan & Push $(serviceName)'
+      displayName: 'Build & Push $(serviceName)'
 
 # ------------------------------------------------------------------
-# Stage 3: Deploy Manifests to AKS (CD)
+# Stage 2: Sequential Deployment to AKS
 # ------------------------------------------------------------------
 - stage: DeployToAKS
-  displayName: 'Deploy App to AKS'
-  dependsOn: BuildScanAndPush
+  displayName: 'Deploy Services to AKS'
+  dependsOn: BuildAndPush
   condition: succeeded()
   jobs:
   - deployment: K8sDeployment
@@ -104,17 +67,39 @@ stages:
           steps:
           - checkout: self
           - task: AzureCLI@2
-            displayName: 'Connect to AKS and Deploy'
+            displayName: 'Connect to AKS and Deploy in Order'
             inputs:
               azureSubscription: '$(azureServiceConnection)'
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
+                # 1. Connect to AKS Cluster
                 az aks get-credentials --resource-group $(resourceGroupName) --name $(aksClusterName) --overwrite-existing
 
-                sed -i 's|image:.*axion-ingestion.*|image: $(acrLoginServer)/axion-ingestion-service:$(imageTag)|g' $(System.DefaultWorkingDirectory)/database/*.yaml
-                sed -i 's|image:.*axion-telemetry.*|image: $(acrLoginServer)/axion-telemetry-query-service:$(imageTag)|g' $(System.DefaultWorkingDirectory)/database/*.yaml
-                sed -i 's|image:.*axion-data-simulator.*|image: $(acrLoginServer)/axion-data-simulator:$(imageTag)|g' $(System.DefaultWorkingDirectory)/database/*.yaml
-                sed -i 's|image:.*axion-ui.*|image: $(acrLoginServer)/axion-ui:$(imageTag)|g' $(System.DefaultWorkingDirectory)/database/*.yaml
+                # 2. Update Image tags in YAML files (Windows PowerShell regex replace)
+                Get-ChildItem "$(System.DefaultWorkingDirectory)/database/*.yaml" | ForEach-Object {
+                    (Get-Content $_.FullName) `
+                    -replace 'image:\s*.*axion-ingestion.*', "image: $(acrLoginServer)/axion-ingestion-service:$(imageTag)" `
+                    -replace 'image:\s*.*axion-data-simulator.*', "image: $(acrLoginServer)/axion-data-simulator:$(imageTag)" `
+                    -replace 'image:\s*.*axion-telemetry.*', "image: $(acrLoginServer)/axion-telemetry-query-service:$(imageTag)" `
+                    -replace 'image:\s*.*axion-ui.*', "image: $(acrLoginServer)/axion-ui:$(imageTag)" |
+                    Set-Content $_.FullName
+                }
 
-                kubectl apply -f $(System.DefaultWorkingDirectory)/database/
+                # Step 1: Deploy Database (Postgres)
+                kubectl apply -f $(System.DefaultWorkingDirectory)/database/postgres.yaml
+
+                # Step 2: Deploy pgAdmin Client
+                kubectl apply -f $(System.DefaultWorkingDirectory)/database/pgadmin.yaml
+
+                # Step 3: Deploy Ingestion Service
+                kubectl apply -f $(System.DefaultWorkingDirectory)/database/axion-ingestion-service.yaml
+
+                # Step 4: Deploy Simulator Service
+                kubectl apply -f $(System.DefaultWorkingDirectory)/database/axion-data-simulator.yaml
+
+                # Step 5: Deploy Telemetry Query Service
+                kubectl apply -f $(System.DefaultWorkingDirectory)/database/axion-telemetry-query-service.yaml
+
+                # Step 6: Deploy UI
+                kubectl apply -f $(System.DefaultWorkingDirectory)/database/axion-ui.yaml
