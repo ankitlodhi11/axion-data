@@ -14,15 +14,42 @@ variables:
 
 stages:
 # ------------------------------------------------------------------
-# Stage 1: Parallel Docker Build & ACR Push
+# Stage 1: Setup Database & pgAdmin on AKS
+# ------------------------------------------------------------------
+- stage: SetupDatabase
+  displayName: 'Deploy Postgres & pgAdmin'
+  jobs:
+  - job: DeployDB
+    displayName: 'Deploy Database Infrastructure'
+    steps:
+    - checkout: self
+    - task: AzureCLI@2
+      displayName: 'Connect AKS & Deploy Postgres + pgAdmin'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          Write-Host "Connecting to AKS..."
+          az aks get-credentials --resource-group $(resourceGroupName) --name $(aksClusterName) --overwrite-existing
+
+          Write-Host "Deploying Postgres Database..."
+          kubectl apply -f $(System.DefaultWorkingDirectory)/database/postgres.yaml
+
+          Write-Host "Deploying pgAdmin..."
+          kubectl apply -f $(System.DefaultWorkingDirectory)/database/pgadmin.yaml
+
+# ------------------------------------------------------------------
+# Stage 2: Parallel Docker Build & Push (Ingestion, Simulator, UI)
 # ------------------------------------------------------------------
 - stage: BuildAndPush
   displayName: 'Parallel Docker Build & Push'
+  dependsOn: [] # Database setup ke parallel chalne ke liye
   jobs:
   - job: BuildMicroservices
     displayName: 'Build & Push Images'
     strategy:
-      maxParallel: 4
+      maxParallel: 3
       matrix:
         Ingestion:
           serviceName: 'axion-ingestion-service'
@@ -30,13 +57,11 @@ stages:
         Simulator:
           serviceName: 'axion-data-simulator'
           folderPath: 'axion-data-simulator'
-        Telemetry:
-          serviceName: 'axion-telemetry-query-service'
-          folderPath: 'axion-telemetry-query-service'
         UI:
           serviceName: 'axion-ui'
           folderPath: 'axion-ui'
     steps:
+    - checkout: self
     - task: AzureCLI@2
       displayName: 'Login to ACR'
       inputs:
@@ -52,11 +77,13 @@ stages:
       displayName: 'Build & Push $(serviceName)'
 
 # ------------------------------------------------------------------
-# Stage 2: Sequential Deployment to AKS
+# Stage 3: Deploy Microservices to AKS
 # ------------------------------------------------------------------
 - stage: DeployToAKS
   displayName: 'Deploy Services to AKS'
-  dependsOn: BuildAndPush
+  dependsOn:
+    - SetupDatabase
+    - BuildAndPush
   condition: succeeded()
   jobs:
   - deployment: K8sDeployment
@@ -67,39 +94,30 @@ stages:
           steps:
           - checkout: self
           - task: AzureCLI@2
-            displayName: 'Connect to AKS and Deploy in Order'
+            displayName: 'Connect AKS & Deploy Microservices'
             inputs:
               azureSubscription: '$(azureServiceConnection)'
               scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                # 1. Connect to AKS Cluster
+                # 1. Connect to AKS
                 az aks get-credentials --resource-group $(resourceGroupName) --name $(aksClusterName) --overwrite-existing
 
-                # 2. Update Image tags in YAML files (Windows PowerShell regex replace)
+                # 2. Update Image tags for built services
                 Get-ChildItem "$(System.DefaultWorkingDirectory)/database/*.yaml" | ForEach-Object {
                     (Get-Content $_.FullName) `
                     -replace 'image:\s*.*axion-ingestion.*', "image: $(acrLoginServer)/axion-ingestion-service:$(imageTag)" `
                     -replace 'image:\s*.*axion-data-simulator.*', "image: $(acrLoginServer)/axion-data-simulator:$(imageTag)" `
-                    -replace 'image:\s*.*axion-telemetry.*', "image: $(acrLoginServer)/axion-telemetry-query-service:$(imageTag)" `
                     -replace 'image:\s*.*axion-ui.*', "image: $(acrLoginServer)/axion-ui:$(imageTag)" |
                     Set-Content $_.FullName
                 }
 
-                # Step 1: Deploy Database (Postgres)
-                kubectl apply -f $(System.DefaultWorkingDirectory)/database/postgres.yaml
-
-                # Step 2: Deploy pgAdmin Client
-                kubectl apply -f $(System.DefaultWorkingDirectory)/database/pgadmin.yaml
-
-                # Step 3: Deploy Ingestion Service
+                # 3. Deploy Application Services
+                Write-Host "Deploying Ingestion Service..."
                 kubectl apply -f $(System.DefaultWorkingDirectory)/database/axion-ingestion-service.yaml
 
-                # Step 4: Deploy Simulator Service
+                Write-Host "Deploying Data Simulator..."
                 kubectl apply -f $(System.DefaultWorkingDirectory)/database/axion-data-simulator.yaml
 
-                # Step 5: Deploy Telemetry Query Service
-                kubectl apply -f $(System.DefaultWorkingDirectory)/database/axion-telemetry-query-service.yaml
-
-                # Step 6: Deploy UI
+                Write-Host "Deploying Axion UI..."
                 kubectl apply -f $(System.DefaultWorkingDirectory)/database/axion-ui.yaml
