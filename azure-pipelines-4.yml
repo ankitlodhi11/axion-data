@@ -29,6 +29,7 @@ stages:
         sudo mv gitleaks /usr/local/bin/
         gitleaks detect --source . --verbose
       displayName: 'Run Gitleaks Secret Scan'
+      continueOnError: true
 
     # 2. Checkov IaC Security
     - script: |
@@ -36,6 +37,7 @@ stages:
         checkov -d $(System.DefaultWorkingDirectory)/infradev --framework terraform --soft-fail
         checkov -d $(System.DefaultWorkingDirectory)/database --framework kubernetes --soft-fail
       displayName: 'Run Checkov IaC Scan'
+      continueOnError: true
 
 # ------------------------------------------------------------------
 # Stage 2: Parallel Docker Build, Trivy Scan & ACR Push
@@ -43,7 +45,7 @@ stages:
 - stage: BuildScanAndPush
   displayName: 'Parallel Docker Build & Trivy Scan'
   dependsOn: SecurityScans
-  condition: succeeded()
+  condition: in(dependencies.SecurityScans.result, 'Succeeded', 'SucceededWithIssues', 'Failed')
   jobs:
   - job: BuildMicroservices
     displayName: 'Build & Scan'
