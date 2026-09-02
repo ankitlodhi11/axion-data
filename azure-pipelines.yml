@@ -5,48 +5,27 @@ pool:
   name: dhurander
 
 stages:
-
-- stage: Terraform_Init_Plan
-  displayName: 'Terraform Init and Plan'
-
+- stage: terraform
+  displayName: Terraform
   jobs:
-  - job: Terraform
-    displayName: 'Terraform'
-
+  - job: terraform_job
     steps:
-
-    - checkout: self
-      displayName: 'Checkout Code'
-
     - task: TerraformInstaller@1
-      displayName: 'Install Terraform'
       inputs:
         terraformVersion: 'latest'
 
-    - task: AzureCLI@2
-      displayName: 'Terraform Init and Plan'
+    - task: TerraformTask@5
       inputs:
-        azureSubscription: 'axion'
-        scriptType: 'ps'
-        scriptLocation: 'inlineScript'
-        inlineScript: 'terraform init'
+        provider: 'azurerm'
+        command: 'init'
         workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
-    - task: AzureCLI@2
+        backendServiceArm: 'trvy'
+        backendAzureRmStorageAccountName: 'azpipeline123'
+        backendAzureRmContainerName: 'tfstate'
+        backendAzureRmKey: 'prod.terraform.tfstate'
+
+    - task: TerraformTask@5
       inputs:
-        azureSubscription: 'axion'
-        scriptType: 'ps'
-        scriptLocation: 'inlineScript'
-        inlineScript: 'terraform plan'
+        provider: 'azurerm'
+        command: 'validate'
         workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
-- stage: terraform
-  jobs:
-    - job: 
-      displayName: apply
-      steps:
-        - task: TerraformTask@5
-          inputs:
-            # provider: 'azurerm'
-            command: 'apply -auto-approve'
-            workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
-            environmentServiceNameAzureRM: 'axion'
-      
