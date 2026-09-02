@@ -23,7 +23,11 @@ stages:
         backendAzureRmStorageAccountName: 'azpipeline123'
         backendAzureRmContainerName: 'tfstate'
         backendAzureRmKey: 'prod.terraform.tfstate'
-
+    -  script: 
+          terraform version
+          terraform providers
+          displayName:'Check Terraform and AzureRM Provider'
+      
     - task: TerraformTask@5
       inputs:
         provider: 'azurerm'
