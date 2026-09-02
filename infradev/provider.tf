@@ -4,19 +4,19 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.0"
+      version = " 5.0"
     }
   }
   backend "azurerm" {
     resource_group_name  = "aks-test"
-    storage_account_name = "akstest987654321"
+    storage_account_name = "rg-pipeline"
     container_name       = "tfstate"
-    key                  = "terraform.tfstate"
+    key                  = "prod.terraform.tfstate"
   }
 }
 
 provider "azurerm" {
   features {}
-  subscription_id = "1a14e6e7-7147-4e0a-83eb-82fd0b414b80"
+  subscription_id = "d795138c-0a80-4512-900f-fa3e55032490"
 }
 
