@@ -119,10 +119,10 @@ stages:
     # =====================================================
     # TERRAFORM VERSION + PROVIDERS
     # =====================================================
-    - script: |
-        terraform version
-        terraform providers
-      displayName: 'Check Terraform and AzureRM Provider'
+    # - script: |
+    #     terraform version
+    #     terraform providers
+    #   displayName: 'Check Terraform and AzureRM Provider'
 
 
     # =====================================================
@@ -132,5 +132,5 @@ stages:
       displayName: 'Terraform Validate'
       inputs:
         provider: 'azurerm'
-        command: 'validate'
+        command: 'plan'
         workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
