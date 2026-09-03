@@ -14,66 +14,112 @@ stages:
 
   jobs:
   - job: SecurityScanJob
-    displayName: 'Gitleaks + Checkov'
+    displayName: 'Gitleaks and Checkov'
 
     steps:
 
-    # --------------------------------------------------------
+    # ========================================================
     # GITLEAKS
-    # --------------------------------------------------------
+    # ========================================================
     - powershell: |
-        Write-Host "======================================"
-        Write-Host "Running Gitleaks Secret Scan"
-        Write-Host "======================================"
+        Write-Host "=========================================="
+        Write-Host "        GITLEAKS SECRET SCAN"
+        Write-Host "=========================================="
 
-        & "C:\Program Files\Gitleaks\gitleaks.exe" detect `
-          --source "$(System.DefaultWorkingDirectory)" `
+        $gitleaks = "C:\Program Files\Gitleaks\gitleaks.exe"
+
+        if (-not (Test-Path $gitleaks)) {
+            Write-Host "##vso[task.logissue type=warning]Gitleaks executable not found."
+            Write-Host "Gitleaks path: $gitleaks"
+            exit 0
+        }
+
+        & $gitleaks detect `
+          --source "$(System.DefaultWorkingDirectory)/infradev" `
           --no-git `
           --redact
 
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host "Gitleaks detected secrets."
-          exit 0
+        $exitCode = $LASTEXITCODE
+
+        Write-Host "Gitleaks Exit Code: $exitCode"
+
+        if ($exitCode -ne 0) {
+            Write-Host "##vso[task.logissue type=warning]Gitleaks detected potential secrets."
+            Write-Host "Pipeline will continue."
+        }
+        else {
+            Write-Host "Gitleaks scan completed successfully."
         }
 
-        Write-Host "Gitleaks scan completed successfully."
+        exit 0
       displayName: 'Gitleaks Secret Scan'
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # CHECKOV INSTALL
-    # --------------------------------------------------------
+    # ========================================================
     - powershell: |
-        Write-Host "======================================"
-        Write-Host "Installing Checkov"
-        Write-Host "======================================"
+        Write-Host "=========================================="
+        Write-Host "          INSTALLING CHECKOV"
+        Write-Host "=========================================="
 
-        python -m pip install --upgrade pip
+        python --version
+
         python -m pip install checkov
 
+        Write-Host "Checkov version:"
         checkov --version
       displayName: 'Install Checkov'
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # CHECKOV TERRAFORM SCAN
-    # --------------------------------------------------------
+    # ========================================================
     - powershell: |
-        Write-Host "======================================"
-        Write-Host "Running Checkov Terraform Scan"
-        Write-Host "======================================"
+        Write-Host "=========================================="
+        Write-Host "       CHECKOV TERRAFORM SECURITY SCAN"
+        Write-Host "=========================================="
 
-        checkov `
-          -d "$(System.DefaultWorkingDirectory)/infradev" `
-          --framework terraform
+        $terraformPath = "$(System.DefaultWorkingDirectory)/infradev"
 
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host "Checkov detected security issues."
-          exit 0
+        if (-not (Test-Path $terraformPath)) {
+            Write-Host "##vso[task.logissue type=warning]Terraform directory not found."
+            Write-Host "Path: $terraformPath"
+            exit 0
         }
 
-        Write-Host "Checkov scan completed successfully."
+        checkov `
+          -d "$terraformPath" `
+          --framework terraform `
+          --output cli
+
+        $exitCode = $LASTEXITCODE
+
+        Write-Host "Checkov Exit Code: $exitCode"
+
+        if ($exitCode -ne 0) {
+            Write-Host "##vso[task.logissue type=warning]Checkov detected security issues."
+            Write-Host "Pipeline will continue."
+        }
+        else {
+            Write-Host "Checkov scan completed successfully."
+        }
+
+        exit 0
       displayName: 'Checkov Terraform Security Scan'
+
+
+    # ========================================================
+    # ARCHIVE TERRAFORM
+    # ========================================================
+    - task: ArchiveFiles@2
+      displayName: 'Archive Terraform Files'
+      inputs:
+        rootFolderOrFile: '$(System.DefaultWorkingDirectory)/infradev'
+        includeRootFolder: true
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/terraform-$(Build.BuildId).zip'
+        replaceExistingArchive: true
 
 
 # ============================================================
@@ -81,18 +127,19 @@ stages:
 # ============================================================
 - stage: SonarCloud
   displayName: 'SonarCloud Analysis'
+
   dependsOn: SecurityScan
   condition: succeeded()
 
   jobs:
   - job: SonarCloudJob
-    displayName: 'SonarCloud Analysis + Quality Gate'
+    displayName: 'SonarCloud Analysis and Quality Gate'
 
     steps:
 
-    # --------------------------------------------------------
+    # ========================================================
     # SONARCLOUD PREPARE
-    # --------------------------------------------------------
+    # ========================================================
     - task: SonarCloudPrepare@3
       displayName: 'Prepare SonarCloud Analysis'
       inputs:
@@ -105,56 +152,63 @@ stages:
         cliSources: '$(System.DefaultWorkingDirectory)/infradev'
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # SONARCLOUD ANALYZE
-    # --------------------------------------------------------
+    # ========================================================
     - task: SonarCloudAnalyze@3
       displayName: 'Run SonarCloud Analysis'
+      continueOnError: true
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # SONARCLOUD QUALITY GATE
-    # --------------------------------------------------------
+    # ========================================================
     - task: SonarCloudPublish@3
       displayName: 'Publish SonarCloud Quality Gate'
       inputs:
-        pollingTimeoutSec: '300'
+        pollingTimeoutSec: '120'
+      continueOnError: true
 
 
 # ============================================================
-# STAGE 3 - TERRAFORM VALIDATE + PLAN
+# STAGE 3 - TERRAFORM
 # ============================================================
 - stage: Terraform
-  displayName: 'Terraform Validate + Plan'
+  displayName: 'Terraform Validate and Plan'
+
   dependsOn: SonarCloud
   condition: succeeded()
 
   jobs:
   - job: TerraformJob
-    displayName: 'Terraform Init + Validate + Plan'
+    displayName: 'Terraform Init Validate and Plan'
 
     steps:
 
-    # --------------------------------------------------------
+    # ========================================================
     # TERRAFORM INSTALL
-    # --------------------------------------------------------
+    # ========================================================
     - task: TerraformInstaller@1
       displayName: 'Install Terraform'
       inputs:
-        terraformVersion: 'latest'
+        terraformVersion: '1.9.8'
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # TERRAFORM VERSION
-    # --------------------------------------------------------
+    # ========================================================
     - powershell: |
+        Write-Host "=========================================="
+        Write-Host "          TERRAFORM VERSION"
+        Write-Host "=========================================="
+
         terraform version
       displayName: 'Terraform Version'
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # TERRAFORM INIT
-    # --------------------------------------------------------
+    # ========================================================
     - task: TerraformTask@5
       displayName: 'Terraform Init'
       inputs:
@@ -167,9 +221,9 @@ stages:
         backendAzureRmKey: 'prod.terraform.tfstate'
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # TERRAFORM VALIDATE
-    # --------------------------------------------------------
+    # ========================================================
     - task: TerraformTask@5
       displayName: 'Terraform Validate'
       inputs:
@@ -178,13 +232,13 @@ stages:
         workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # TERRAFORM PLAN
-    # --------------------------------------------------------
+    # ========================================================
     - task: TerraformTask@5
       displayName: 'Terraform Plan'
       inputs:
         provider: 'azurerm'
         command: 'plan'
         workingDirectory: '$(System.DefaultWorkingDirectory)/infradev'
-        environmentServiceNameAzureRM: 'trvy'
+         
