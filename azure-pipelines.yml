@@ -5,16 +5,107 @@ pool:
   name: dhurander
 
 stages:
+
 - stage: terraform
-  displayName: Terraform
+  displayName: 'Security Scan + Terraform'
+
   jobs:
   - job: terraform_job
+    displayName: 'Gitleaks + Checkov + SonarCloud + Terraform'
+
     steps:
+
+    # =====================================================
+    # TERRAFORM INSTALL
+    # =====================================================
     - task: TerraformInstaller@1
+      displayName: 'Install Terraform'
       inputs:
         terraformVersion: 'latest'
 
+
+    # =====================================================
+    # GITLEAKS
+    # =====================================================
+    - powershell: |
+        Write-Host "Running Gitleaks..."
+
+        & "C:\Program Files\Gitleaks\gitleaks.exe" detect `
+          --source "$(System.DefaultWorkingDirectory)" `
+          --no-git `
+          --redact
+
+        Write-Host "Gitleaks scan completed."
+      displayName: 'Gitleaks Secret Scan'
+      continueOnError: true
+
+
+    # =====================================================
+    # CHECKOV INSTALL
+    # =====================================================
+    - powershell: |
+        Write-Host "Installing Checkov..."
+
+        python -m pip install --upgrade pip
+        python -m pip install checkov
+
+        checkov --version
+      displayName: 'Install Checkov'
+
+
+    # =====================================================
+    # CHECKOV TERRAFORM SCAN
+    # =====================================================
+    - powershell: |
+        Write-Host "Running Checkov Terraform scan..."
+
+        checkov `
+          -d "$(System.DefaultWorkingDirectory)/infradev" `
+          --framework terraform
+
+        Write-Host "Checkov scan completed."
+      displayName: 'Checkov Terraform Security Scan'
+      continueOnError: true
+
+
+    # =====================================================
+    # SONARCLOUD PREPARE
+    # =====================================================
+    - task: SonarCloudPrepare@3
+      displayName: 'Prepare SonarCloud Analysis'
+      inputs:
+        SonarCloud: 'pipelinetesting'
+        organization: 'ankitdec329'
+        scannerMode: 'CLI'
+        configMode: 'manual'
+        cliProjectKey: 'ankitdec329_ReactTodoUIMonolith.git'
+        cliProjectName: 'ReactTodoUIMonolith'
+        cliSources: '$(System.DefaultWorkingDirectory)/infradev'
+
+
+    # =====================================================
+    # SONARCLOUD ANALYZE
+    # =====================================================
+    - task: SonarCloudAnalyze@3
+      displayName: 'Run SonarCloud Analysis'
+      continueOnError: true
+
+
+    # =====================================================
+    # SONARCLOUD QUALITY GATE
+    # =====================================================
+    - task: SonarCloudPublish@3
+      displayName: 'Publish SonarCloud Quality Gate'
+      inputs:
+        pollingTimeoutSec: '300'
+      continueOnError: true
+
+
+    # =====================================================
+    # TERRAFORM INIT
+    # =====================================================
     - task: TerraformTask@5
+      displayName: 'Terraform Init'
       inputs:
         provider: 'azurerm'
         command: 'init'
@@ -23,12 +114,22 @@ stages:
         backendAzureRmStorageAccountName: 'azpipeline123'
         backendAzureRmContainerName: 'tfstate'
         backendAzureRmKey: 'prod.terraform.tfstate'
-    -  script: 
-          terraform version
-          terraform providers
-          displayName:'Check Terraform and AzureRM Provider'
-      
+
+
+    # =====================================================
+    # TERRAFORM VERSION + PROVIDERS
+    # =====================================================
+    - script: |
+        terraform version
+        terraform providers
+      displayName: 'Check Terraform and AzureRM Provider'
+
+
+    # =====================================================
+    # TERRAFORM VALIDATE
+    # =====================================================
     - task: TerraformTask@5
+      displayName: 'Terraform Validate'
       inputs:
         provider: 'azurerm'
         command: 'validate'
