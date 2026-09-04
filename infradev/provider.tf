@@ -8,8 +8,8 @@ terraform {
     }
   }
   backend "azurerm" {
-    resource_group_name  = "aks-test"
-    storage_account_name = "rg-pipeline"
+    resource_group_name  = "rg-pipeline"
+    storage_account_name = "azpipeline123"
     container_name       = "tfstate"
     key                  = "prod.terraform.tfstate"
   }
